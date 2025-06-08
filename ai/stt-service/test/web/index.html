@@ -410,7 +410,7 @@
                 
                 <!-- 버퍼 상태 표시 -->
                 <div id="bufferStatus" class="buffer-status" style="display: none;">
-                    버퍼링 중: <span id="bufferProgress">0/60</span>초 (<span id="bufferSize">0</span>KB)
+                    버퍼링 중: <span id="bufferProgress">0/30</span>초 (<span id="bufferSize">0</span>KB)
                 </div>
                 
                 <!-- 오디오 송수신 로그 -->
@@ -575,6 +575,9 @@
                     this.setConnectionStatus(true);
                     this.updateStatus('connected', '서버 연결 완료');
                     this.updateButtonStates();
+                    
+                    // 연결 상태 디버깅 정보
+                    this.addLog('info', `웹소켓 상태: ${this.ws.readyState}, 프로토콜: ${this.ws.protocol}`);
                 };
                 
                 this.ws.onmessage = (event) => {
@@ -689,6 +692,13 @@
                     this.setupAudioVisualization(source);
                     
                     this.isRecording = true;
+                    
+                    // 서버에 녹음 시작 명령 전송
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({command: "start_recording"}));
+                        this.addLog('send', '녹음 시작 명령 전송');
+                    }
+                    
                     this.updateStatus('recording', '녹음 중...');
                     this.updateButtonStates();
                     
@@ -797,8 +807,14 @@
                 
                 this.isRecording = false;
                 
-                // 남은 버퍼 데이터 전송
+                // 남은 버퍼 데이터 전송 (녹음 중지 명령 전에)
                 this.sendBufferedAudio(true);
+                
+                // 서버에 녹음 중지 명령 전송 (데이터 전송 후)
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({command: "stop_recording"}));
+                    this.addLog('send', '녹음 중지 명령 전송');
+                }
                 
                 // 시각화 정지
                 if (this.animationId) {
@@ -852,13 +868,18 @@
                     this.bufferStartTime = Date.now();
                     this.audioBufferDuration = 0;
                     document.getElementById('bufferStatus').style.display = 'block';
-                    this.addLog('info', '60초 버퍼링 시작');
+                    this.addLog('info', `30초 버퍼링 시작 - PCM 배열 길이: ${pcmData.length}, 오디오 길이: ${audioDuration.toFixed(3)}초`);
                 }
                 
                 this.audioBuffer.push(pcmData);
                 this.audioBufferDuration += audioDuration;
                 
-                // 오디오 기준 60초가 되면 전송
+                // 디버깅용 로그 (매 100개 chunk마다)
+                if (this.audioBuffer.length % 100 === 0) {
+                    this.addLog('info', `버퍼 상태: ${this.audioBuffer.length}개 청크, 총 ${this.audioBufferDuration.toFixed(1)}초`);
+                }
+                
+                // 오디오 기준 30초가 되면 전송
                 if (this.audioBufferDuration >= this.bufferDuration) {
                     this.sendBufferedAudio();
                 }
@@ -907,16 +928,29 @@
             sendBufferedAudio(isFinal = false) {
                 if (this.audioBuffer.length === 0) return;
                 
-                // WebSocket으로 전송 (기존 index_old.html 방식)
+                // WebSocket으로 전송 - Int16Array 배열을 하나의 ArrayBuffer로 합치기
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    const combinedBlob = new Blob(this.audioBuffer);
-                    this.ws.send(combinedBlob);
+                    // 모든 Int16Array 배열의 총 길이 계산
+                    const totalLength = this.audioBuffer.reduce((sum, buffer) => sum + buffer.length, 0);
                     
-                    const sizeKB = (combinedBlob.size / 1024).toFixed(1);
+                    // 새로운 Int16Array 생성하여 모든 데이터 합치기
+                    const combinedArray = new Int16Array(totalLength);
+                    let offset = 0;
+                    
+                    for (const buffer of this.audioBuffer) {
+                        combinedArray.set(buffer, offset);
+                        offset += buffer.length;
+                    }
+                    
+                    // ArrayBuffer로 변환하여 전송
+                    const audioData = combinedArray.buffer;
+                    this.ws.send(audioData);
+                    
+                    const sizeKB = (audioData.byteLength / 1024).toFixed(1);
                     const duration = this.audioBufferDuration.toFixed(1);
-                    this.totalAudioSent += combinedBlob.size;
+                    this.totalAudioSent += audioData.byteLength;
                     
-                    this.addLog('send', `오디오 데이터 전송: ${duration}초 (${sizeKB}KB) | 총 전송: ${(this.totalAudioSent / 1024 / 1024).toFixed(1)}MB`);
+                    this.addLog('send', `오디오 데이터 전송: ${duration}초 (${sizeKB}KB, ${totalLength} samples) | 총 전송: ${(this.totalAudioSent / 1024 / 1024).toFixed(1)}MB`);
                 }
                 
                 // 버퍼 초기화
@@ -925,7 +959,7 @@
                 this.bufferStartTime = isFinal ? null : Date.now();
                 
                 if (!isFinal) {
-                    this.addLog('info', '새로운 60초 버퍼링 시작');
+                    this.addLog('info', '새로운 30초 버퍼링 시작');
                 }
             }
             

@@ -28,7 +28,7 @@ async def call_emotion_analysis(audio_bytes: bytes, scenario: str, language: str
         감정분석 결과 또는 None (실패 시)
     """
     try:
-        emotion_service_url = "http://localhost:8001/api/v1/emotion/analyze_bytes"
+        emotion_service_url = "http://210.119.33.7:8621/api/v1/emotion/analyze_bytes"
         
         params = {
             "scenario": scenario,
@@ -456,7 +456,7 @@ class STTWebSocketManager:
             language: 인식 언어
             scenario: 시나리오 타입 (dating, interview, presentation)
         """
-        logger.info(f"WebSocket 세션 초기화: {connection_id}, 언어: {language}, 시나리오: {scenario}")
+        logger.info(f"WebSocket 세션 초기화 시작: {connection_id}, 언어: {language}, 시나리오: {scenario}")
         self.sessions[connection_id] = {
             "buffer": bytearray(),
             "last_chunk_time": time.time(),
@@ -466,8 +466,9 @@ class STTWebSocketManager:
             "segment_count": 0,
             "last_transcription": "",
             "is_first_segment": True,
-            "is_recording": False
+            "is_recording": False  # 초기에는 False로 설정
         }
+        logger.info(f"WebSocket 세션 초기화 완료: {connection_id}, 초기 녹음 상태: {self.sessions[connection_id]['is_recording']}")
     
     async def _load_model_if_needed(self, connection_id: str) -> bool:
         """
@@ -537,7 +538,10 @@ class STTWebSocketManager:
                     if command == "start_recording":
                         logger.info(f"녹음 시작 요청 수신: {connection_id}")
                         session = self.sessions[connection_id]
+                        old_state = session.get("is_recording", False)
                         session["is_recording"] = True
+                        
+                        logger.info(f"녹음 상태 변경: {connection_id}, {old_state} -> {session['is_recording']}")
                         
                         await self.connection_manager.send_json(connection_id, {
                             "type": "recording_started",
@@ -549,11 +553,17 @@ class STTWebSocketManager:
                     elif command == "stop_recording":
                         logger.info(f"녹음 중지 요청 수신: {connection_id}")
                         session = self.sessions[connection_id]
-                        session["is_recording"] = False
+                        old_state = session.get("is_recording", False)
                         
-                        # 버퍼에 남은 데이터 최종 처리
+                        # 버퍼에 남은 데이터 최종 처리 (녹음 상태 변경 전에)
                         if len(session["buffer"]) > 0:
+                            logger.info(f"녹음 중지 시 남은 버퍼 데이터 처리: {connection_id}, 버퍼 크기: {len(session['buffer'])} bytes")
                             await self._process_audio_buffer(connection_id, is_final=True)
+                        else:
+                            logger.info(f"녹음 중지 시 처리할 버퍼 데이터 없음: {connection_id}")
+                        
+                        session["is_recording"] = False
+                        logger.info(f"녹음 상태 변경: {connection_id}, {old_state} -> {session['is_recording']}")
                         
                         await self.connection_manager.send_json(connection_id, {
                             "type": "recording_stopped",
@@ -629,26 +639,33 @@ class STTWebSocketManager:
             계속 처리해야 하는지 여부
         """
         if connection_id not in self.sessions:
+            logger.warning(f"알 수 없는 연결 ID로 바이너리 데이터 수신: {connection_id}")
             return False
             
         session = self.sessions[connection_id]
         
-        # 녹음 상태가 아니면 오디오 데이터 무시
+        # 바이너리 데이터 수신 로그 (항상 기록)
+        logger.info(f"바이너리 데이터 수신: {connection_id}, 크기: {len(binary_data)} bytes")
+        
+        # 녹음 상태가 아니면 오디오 데이터 무시하지만 로그는 남김
         if not session.get("is_recording", False):
-            logger.debug(f"녹음 상태가 아니므로 오디오 데이터 무시: {connection_id}")
-            return True
+            logger.warning(f"녹음 상태가 아니므로 오디오 데이터 무시: {connection_id}, 현재 녹음 상태: {session.get('is_recording', 'None')}")
+            # 자동으로 녹음 상태를 True로 설정 (웹 클라이언트 호환성)
+            logger.info(f"자동으로 녹음 상태를 활성화: {connection_id}")
+            session["is_recording"] = True
         
         # 데이터 버퍼에 추가
         session["buffer"].extend(binary_data)
         session["last_chunk_time"] = time.time()
         
-        logger.info(f"오디오 데이터 수신: {connection_id}, 크기: {len(binary_data)} bytes, 현재 버퍼 크기: {len(session['buffer'])} bytes")
+        logger.info(f"오디오 데이터 버퍼에 추가: {connection_id}, 추가된 크기: {len(binary_data)} bytes, 현재 버퍼 크기: {len(session['buffer'])} bytes")
         
         # 버퍼 크기 확인 및 처리
         # 30초 분량의 오디오 데이터 (16kHz, 16-bit, mono = 2바이트 * 16000 * 30 = 960,000바이트)
         buffer_threshold = min(settings.DEFAULT_BUFFER_SIZE, settings.MAX_AUDIO_BUFFER_MB * 1024 * 1024)
         
         if len(session["buffer"]) >= buffer_threshold and not session["is_processing"]:
+            logger.info(f"버퍼 임계값 도달, 처리 시작: {connection_id}, 임계값: {buffer_threshold}, 현재 크기: {len(session['buffer'])}")
             # 병렬로 처리
             asyncio.create_task(self._process_audio_buffer(connection_id))
         
