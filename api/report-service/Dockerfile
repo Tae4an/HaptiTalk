@@ -16,6 +16,9 @@ COPY api/report-service/package*.json ./
 RUN sed -i 's/"chart.js": ".*",//g' package.json && \
     sed -i 's/"chartjs-node-canvas": ".*",//g' package.json
 
+# color-name 버전 문제 해결을 위해 먼저 설치
+RUN npm install --no-save color-name@1.1.4
+
 # 필수 패키지만 설치
 RUN npm install --production morgan prom-client express winston cors helmet jsonwebtoken ioredis pg sequelize
 

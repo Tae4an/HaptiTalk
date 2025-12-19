@@ -1,51 +1,49 @@
-const winston = require('winston');
-const { format } = winston;
-
 // 서비스 이름 설정
 const SERVICE_NAME = process.env.SERVICE_NAME || 'report-service';
 
-// Define log format with standardized structure
-const logFormat = format.combine(
-    format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
-    format.errors({ stack: true }),
-    format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'service'] }),
-    format.json()
-);
-
-// Create logger instance
-const logger = winston.createLogger({
+// 간단한 console 기반 로거 (winston ES Module 문제 회피)
+const logger = {
     level: process.env.LOG_LEVEL || 'info',
-    format: logFormat,
-    defaultMeta: { 
-        service: SERVICE_NAME,
-        // host 정보 추가
-        host: process.env.HOSTNAME || 'localhost',
-        environment: process.env.NODE_ENV || 'development'
+    
+    _log(level, message, meta = {}) {
+        const timestamp = new Date().toISOString();
+        const logObject = {
+            timestamp,
+            level,
+            service: SERVICE_NAME,
+            message,
+            ...meta
+        };
+        
+        const logString = JSON.stringify(logObject);
+        
+        if (level === 'error') {
+            console.error(logString);
+        } else if (level === 'warn') {
+            console.warn(logString);
+        } else {
+            console.log(logString);
+        }
     },
-    transports: [
-        // 콘솔 출력 (도커 로그용)
-        new winston.transports.Console({
-            format: process.env.NODE_ENV === 'production' 
-                ? format.json() // 프로덕션에서는 JSON 형식
-                : format.combine( // 개발 환경에서는 읽기 쉬운 형식
-                    format.colorize(),
-                    format.printf(info => {
-                        const { timestamp, level, message, metadata } = info;
-                        const metaStr = Object.keys(metadata).length ? 
-                            ` ${JSON.stringify(metadata)}` : '';
-                        return `${timestamp} ${level}: [${SERVICE_NAME}] ${message}${metaStr}`;
-                    })
-                )
-        }),
-        // 파일 로깅 설정 (옵션)
-        ...(process.env.LOG_TO_FILE === 'true' ? [
-            new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-            new winston.transports.File({ filename: 'logs/combined.log' })
-        ] : [])
-    ],
-    // 종료 시 로깅 처리
-    exitOnError: false
-});
+    
+    info(message, meta) {
+        this._log('info', message, meta);
+    },
+    
+    warn(message, meta) {
+        this._log('warn', message, meta);
+    },
+    
+    error(message, meta) {
+        this._log('error', message, meta);
+    },
+    
+    debug(message, meta) {
+        if (this.level === 'debug') {
+            this._log('debug', message, meta);
+        }
+    }
+};
 
 // HTTP 요청 로깅 미들웨어
 logger.requestMiddleware = (req, res, next) => {

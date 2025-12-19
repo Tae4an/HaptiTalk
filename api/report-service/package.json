@@ -8,6 +8,9 @@
     "dev": "nodemon src/app.js",
     "test": "jest"
   },
+  "overrides": {
+    "color-name": "1.1.4"
+  },
   "dependencies": {
     "@opentelemetry/auto-instrumentations-node": "^0.58.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.200.0",

@@ -1,5 +1,13 @@
 // OpenTelemetry 트레이싱 초기화 (가장 먼저 로드되어야 함)
-require('./utils/tracing');
+// 환경 변수로 비활성화 가능
+if (process.env.ENABLE_TRACING !== 'false') {
+  try {
+    require('./utils/tracing');
+  } catch (error) {
+    console.warn('[WARNING] OpenTelemetry 초기화 실패:', error.message);
+    console.warn('[WARNING] 트레이싱 없이 계속 진행합니다.');
+  }
+}
 
 const express = require('express');
 const cors = require('cors');

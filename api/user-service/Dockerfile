@@ -27,8 +27,8 @@ COPY api/shared /app/shared
 COPY api/user-service/src ./src
 
 # Now, move the pre-installed node_modules for kafka-client to its final location
-# Ensure the target directory exists
-RUN mkdir -p /app/shared/kafka-client
+# Ensure the target directory exists and remove any existing node_modules
+RUN mkdir -p /app/shared/kafka-client && rm -rf /app/shared/kafka-client/node_modules
 # Move node_modules. If it doesn't exist from the temp install, this won't create an error.
 RUN if [ -d /tmp/shared/kafka-client/node_modules ]; then mv /tmp/shared/kafka-client/node_modules /app/shared/kafka-client/; fi
 # Clean up temp directory
